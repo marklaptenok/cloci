@@ -1,11 +1,12 @@
 package main
 
 import (
-	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"codelearning.online/conf"
 	"codelearning.online/logger"
 )
 
@@ -17,7 +18,7 @@ var (
 
 func sigint_handler() {
 	//	TO-DO: call clean_up(), delete the following
-	fmt.Println("SIGINT received")
+	logger.Info("SIGINT received")
 
 	//	Stops the service.
 	service_waiter_channel <- true
@@ -25,7 +26,7 @@ func sigint_handler() {
 
 func sigterm_handler() {
 	//	TO-DO: call clean_up(), delete the following
-	fmt.Println("SIGTERM received")
+	logger.Info("SIGTERM received")
 
 	//	Stops the service.
 	service_waiter_channel <- true
@@ -33,7 +34,7 @@ func sigterm_handler() {
 
 func sigkill_handler() {
 	//	TO-DO: call clean_up(), delete the following
-	fmt.Println("SIGKILL received")
+	logger.Info("SIGKILL received")
 
 	//	Stops the service.
 	service_waiter_channel <- true
@@ -57,8 +58,7 @@ func set_signal_handlers(sigint_handler func(), sigterm_handler func(), sigkill_
 
 		for received_signal := range signals_channel {
 
-			//	TO-DO: use Logger.Log_to_stdout
-			fmt.Printf("%v received\n", received_signal)
+			logger.Info("%v received", received_signal)
 
 			switch received_signal {
 			case syscall.SIGINT:
@@ -72,16 +72,30 @@ func set_signal_handlers(sigint_handler func(), sigterm_handler func(), sigkill_
 
 	}()
 
-	//	TO-DO: use Logger.Log_to_stdout
-	fmt.Println("Signal handlers were set up")
+	logger.Info("Signal handlers were set up")
 }
 
 func init() {
 
-	logger.Check()
+	//	Checks whetner logger works or not.
+	//	If not, stops the service.
+	if err := logger.Check(); err != nil {
+		os.Exit(int(err.(*logger.ClpError).Code))
+	}
 
+	//	TO-DO: parse command line arguments and fill the struct.
+	bind_address := net.ParseIP("127.0.0.1")
+	bind_port := 443
+	cnf := conf.ClociConfiguration{bind_address, uint16(bind_port)}
+
+	//	Reads service configuration from parsed command options.
+	if err := conf.Read(&cnf); err != nil {
+		logger.Error(err)
+	}
+
+	//	Sets handlers for SIGINT, SIGTERM, and SIGKILL signals.
+	//	SIGKILL is not processed on FreeBSD.
 	service_waiter_channel = make(chan bool, 1)
-
 	set_signal_handlers(sigint_handler, sigterm_handler, sigkill_handler)
 
 }
@@ -89,6 +103,6 @@ func init() {
 func main() {
 
 	<-service_waiter_channel
-	fmt.Println("Service is gracefully stopped. Have a good day!")
+	logger.Info("Service is gracefully stopped. Have a good day!")
 
 }
