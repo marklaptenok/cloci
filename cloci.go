@@ -21,8 +21,6 @@ func sigint_handler() {
 	//	TO-DO: call clean_up(), delete the following
 	logger.Debug("SIGINT received")
 
-	https_server_handle.Stop()
-
 	//	Stops the service.
 	service_waiter_channel <- true
 }
@@ -30,8 +28,6 @@ func sigint_handler() {
 func sigterm_handler() {
 	//	TO-DO: call clean_up(), delete the following
 	logger.Debug("SIGTERM received")
-
-	https_server_handle.Stop()
 
 	//	Stops the service.
 	service_waiter_channel <- true
@@ -115,6 +111,7 @@ func init() {
 func main() {
 
 	<-service_waiter_channel
+	https_server_handle.Stop()
 	logger.Info("Service is gracefully stopped. Have a good day!")
 
 }
