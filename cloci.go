@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"os/signal"
 	"syscall"
@@ -49,9 +50,10 @@ func set_signal_handlers(sigint_handler func(), sigterm_handler func(), sigkill_
 	//	Ignores all incoming signals.
 	signal.Ignore()
 
-	//	We will process SIGINTs, SIGTERMs, and SIGKILLs only.
+	//	We will process SIGINTs, SIGTERMs, SIGKILLs, and SIGCHLD only.
 	//	SIGKILL will not be caught on FreeBSD. See https://pkg.go.dev/os/signal
-	signal.Notify(signals_channel, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL)
+	//	SIGCHLD is needed to correctly perform wait(6) syscalls.
+	signal.Notify(signals_channel, syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL, syscall.SIGCHLD)
 
 	//	Starts a signal processing routine.
 	//	It reacts the same on the both signals.
@@ -98,12 +100,17 @@ func init() {
 		logger.Error(err)
 	}
 
-	//	If we here, than logger works, necessary signals are ready for being processed,
+	//	If we are here, than logger works and necessary OS process signals are ready for being processed,
 	//	and a configuration ('cnf') is set.
+
+	//	Allocates the processors which one by one will process clients' requests.
+	processors := make([]func(ctx context.Context, message []byte) (context.Context, []byte, error), 2)
+	processors[0] = parse_request
+	processors[1] = build_and_run_code
 
 	//	Starts serving of incoming requests.
 	//	In case of error, stops the service.
-	if https_server_handle, err = https_server.Start(cnf); err != nil {
+	if https_server_handle, err = https_server.Start(cnf, processors); err != nil {
 		logger.Error(err)
 	}
 }
