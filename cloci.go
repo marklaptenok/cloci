@@ -119,7 +119,11 @@ func init() {
 func main() {
 
 	<-service_waiter_channel
-	https_server_handle.Stop()
+
+	if https_server_handle != nil {
+		https_server_handle.Stop()
+	}
+
 	logger.Info("Service is gracefully stopped. Have a good day!")
 
 }
