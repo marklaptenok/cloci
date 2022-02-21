@@ -104,9 +104,10 @@ func init() {
 	//	and a configuration ('cnf') is set.
 
 	//	Allocates the processors which one by one will process clients' requests.
-	processors := make([]func(ctx context.Context, message []byte) (context.Context, []byte, error), 2)
+	processors := make([]func(ctx context.Context, message []byte) (context.Context, []byte, error), 3)
 	processors[0] = parse_request
 	processors[1] = build_and_run_code
+	processors[2] = encode_response
 
 	//	Starts serving of incoming requests.
 	//	In case of error, stops the service.

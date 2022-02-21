@@ -18,14 +18,77 @@ type Request struct {
 	Code_to_process string  `json:"code_to_process"`
 }
 
-//	Creates an alias for the integer type to use it as a key in contexts
-//	that are passed throw the following processors.
-type language_key int
+type Response struct {
+	CompilerOutput string `json:"compiler_output"`
+	ProgramOutput  string `json:"program_output"`
+}
 
 //	Creates the key that denotes language of the code processors face with.
 //	Particular value of the code_language_key inside a context means language at which the code is written.
 //	The value will be taken from the request's body by the following function (= processor).
-const code_language_key language_key = 0
+const code_language_key int = 0
+
+//	Creates the keys that denote position of the first byte in a set of bytes
+//	which represents builder's output and position of the first byte in the set of bytes
+//	which represents built application's output.
+const position_compiler_output_key int = 1
+const position_program_output_key int = 2
+
+//	SUPPORT FUNCTIONS
+
+//	Reads no more than 'limit amount of bytes from a given stream ('stream').
+//	Returns error in case of an i/o error.
+func read_from_stream(stream io.ReadCloser, limit int) (response []byte, summary_written_bytes_cnt int, err error) {
+
+	response = nil
+	summary_written_bytes_cnt = 0
+	err = nil
+
+	for err != io.EOF {
+
+		var written_bytes_cnt = 0
+		//	Allocates a buffer.
+		read_buffer := make([]byte, limit)
+
+		//	Reads data from the stream. Checks the state of reading.
+		written_bytes_cnt, err = stream.Read(read_buffer)
+		if err != nil && err != io.EOF {
+			logger.Warning("Response has not been read from the stream: %s", err.Error())
+			break
+		}
+
+		//	No bytes read, just stops reading.
+		if written_bytes_cnt == 0 {
+			break
+		}
+
+		//	Append read data to the final buffer.
+		response = append(response, read_buffer...)
+
+		//	Calculates the overall amount of bytes read from the stream.
+		summary_written_bytes_cnt += written_bytes_cnt
+		logger.Debug("Read %d bytes from the stream", written_bytes_cnt)
+
+		//	Checks whether we hit the limit.
+		if summary_written_bytes_cnt >= limit {
+			logger.Debug("The limit reading from the stream hit (limit = %d bytes, read = %d bytes)", limit, summary_written_bytes_cnt)
+
+			break
+		}
+
+	} //	--- end of for ---
+
+	//	Cuts unnecessary bytes at the end.
+	if summary_written_bytes_cnt < limit {
+		response = response[:summary_written_bytes_cnt]
+	} else {
+		response = response[:limit]
+	}
+
+	return
+}
+
+//	PROCESSORS
 
 func parse_request(ctx context.Context, message []byte) (context.Context, []byte, error) {
 
@@ -85,7 +148,7 @@ func parse_request(ctx context.Context, message []byte) (context.Context, []byte
 	logger.Info("Language = %d", language)
 
 	//	Puts the language to the given context ('ctx').
-	//	The new context ('new_ctx') is the child of the precious one ('ctx').
+	//	The new context ('new_ctx') is the child of the previous one ('ctx').
 	new_ctx := context.WithValue(ctx, code_language_key, language)
 
 	logger.Info("Code length = %d", len(current_request.Code_to_process))
@@ -96,14 +159,15 @@ func parse_request(ctx context.Context, message []byte) (context.Context, []byte
 
 func build_and_run_code(ctx context.Context, message []byte) (context.Context, []byte, error) {
 
+	//logger.Debug("%v\n Length: %d", message, len(message))
+
 	//	TO-DO: get these parameters from server configuration.
 	dir_for_binaries := ""
 	building_timeout := 250 * time.Millisecond
 	running_timeout := 250 * time.Millisecond
 	builder_path := "/usr/local/bin/gcc"
 	builder_options := []string{"-xc", "-O0", "-std=c11", "-Wall", "-Wextra", "-pedantic", "-", "-o"}
-	//	TO-DO: check. Has to be greater than 0
-	stderr_buffer_size := 20        //(1 << 11) //	2Kb
+	stderr_buffer_size := (1 << 11) //	2Kb
 	stdout_buffer_size := (1 << 11) //	2Kb
 
 	//	If no message (= code to build) presented or no given context, returns.
@@ -112,6 +176,15 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 		return ctx, nil, &logger.ClpError{
 			Code:     1,
 			Msg:      "Code to build or/and context is not presented",
+			Location: location}
+	}
+
+	//	Checks crutial input arguments.
+	if stderr_buffer_size <= 0 || stdout_buffer_size <= 0 || building_timeout == 0 || running_timeout == 0 {
+		location, _ := logger.Get_function_name()
+		return ctx, nil, &logger.ClpError{
+			Code:     100,
+			Msg:      "Invalid limits",
 			Location: location}
 	}
 
@@ -140,7 +213,7 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 	// Adds filename for the output binary to the builder options.
 	builder_options = append(builder_options, output_file.Name())
 
-	//	Take from the given context the language in which the code is written.
+	//	Takes from the given context the language in which the code is written.
 	language, is_uint8 := ctx.Value(code_language_key).(uint8)
 	//	Checks whether it's of proper type or not.
 	if !is_uint8 {
@@ -199,7 +272,7 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 
 			defer stdin.Close()
 
-			written_bytes_cnt, err := io.WriteString(stdin, string(message))
+			written_bytes_cnt, err := stdin.Write(message)
 			if err != nil || written_bytes_cnt != len(message) {
 				logger.Warning("Code of length = %d bytes (sent = %d bytes) was not sent to the builder: %v", len(message), written_bytes_cnt, err)
 			} else {
@@ -210,41 +283,8 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 
 		//	Reads from stderr the certain amount of bytes. Wanring! It's not accurate.
 		//	If any error happens during building, the builder writes here.
-		var builder_stderr_response []byte
-		var stderr_reader_err error
-		var summary_written_bytes_cnt = 0
-		for stderr_reader_err != io.EOF {
-
-			var written_bytes_cnt = 0
-			read_buffer := make([]byte, stderr_buffer_size)
-
-			written_bytes_cnt, stderr_reader_err = stderr.Read(read_buffer)
-			if stderr_reader_err != nil && stderr_reader_err != io.EOF {
-				logger.Warning("Stderr response from the builder was not read: %s", stderr_reader_err.Error())
-				break
-			}
-
-			//	No bytes read, just stops reading.
-			if written_bytes_cnt == 0 {
-				break
-			}
-
-			builder_stderr_response = append(builder_stderr_response, read_buffer...)
-
-			//	Calculates the overall amount of bytes read from builder's stderr.
-			summary_written_bytes_cnt += written_bytes_cnt
-			logger.Debug("Read %d bytes from stderr response from the builder", written_bytes_cnt)
-
-			//	Checks whether we hit the limit.
-			if summary_written_bytes_cnt >= stderr_buffer_size {
-				logger.Debug("The limit reading from builder's stderr hit (limit = %d bytes, read = %d bytes)", stderr_buffer_size, summary_written_bytes_cnt)
-
-				builder_stderr_response = builder_stderr_response[:stderr_buffer_size-1]
-				break
-			}
-
-		}
-		logger.Debug("Building finished. %d bytes read from stderr", summary_written_bytes_cnt)
+		builder_stderr_response, summary_written_bytes_cnt, stderr_reader_err := read_from_stream(stderr, stderr_buffer_size)
+		logger.Debug("Building has completed. %d bytes read from stderr", summary_written_bytes_cnt)
 
 		//	Waits until the builder stopped and all data will be read from stderr.
 		//	Closes the stderr pipe and deallocates resources for 'cmd_building'.
@@ -299,7 +339,14 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 		if len(builder_stderr_response) > 0 {
 			logger.Debug("Builder has reported errors\n===== builder stderr response start =====\n%s\n===== builder stderr response end =====\n", string(builder_stderr_response))
 
-			return ctx, builder_stderr_response, nil
+			//	Puts the positions to the given context ('ctx').
+			//	The new context ('new_ctx') is the child of the previous one ('ctx').
+			new_ctx := context.WithValue(ctx, position_compiler_output_key, 0)
+			//	We have only builder's output, so sets the position
+			//	from which application's output begins to the end of whole message.
+			new_ctx = context.WithValue(new_ctx, position_program_output_key, len(builder_stderr_response))
+
+			return new_ctx, builder_stderr_response, nil
 		}
 
 		//	If the builder reports no error, we will execute the built application.
@@ -343,19 +390,21 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 				Location: location}
 		}
 
-		code_stdout_response := make([]byte, stdout_buffer_size)
-		_, stdout_reader_err := stdout.Read(code_stdout_response)
+		//	Reads application's output to stdout.
+		code_stdout_response, stdout_response_size, stdout_reader_err := read_from_stream(stdout, stdout_buffer_size)
 		if stdout_reader_err != nil && stdout_reader_err != io.EOF {
 			logger.Warning("Stdout response from the executed application was not read: %s", stdout_reader_err.Error())
 		}
+		logger.Info("Application has written %d bytes to stdout", stdout_response_size)
 
-		code_stderr_response := make([]byte, stderr_buffer_size)
-		_, stderr_reader_err = stdout.Read(code_stderr_response)
+		//	Reads application's output to stderr.
+		code_stderr_response, stderr_response_size, stderr_reader_err := read_from_stream(stderr, stderr_buffer_size)
 		if stderr_reader_err != nil && stderr_reader_err != io.EOF {
 			logger.Warning("Stderr response from the executed application was not read: %s", stderr_reader_err.Error())
 		}
+		logger.Info("Application has written %d bytes to stderr", stderr_response_size)
 
-		//	Waits until the application stopped and all data will be read from stdout and stderr.
+		//	Waits until the application exited and all data will be read from stdout and stderr.
 		//	Closes the stdout and stderr pipes and deallocates resources for 'cmd_run_output'.
 		if err = cmd_run_output.Wait(); err != nil {
 
@@ -381,16 +430,35 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 			}
 		}
 
-		logger.Debug("\n===== application stdout response start =====\n%s\n===== application stdout response end =====\n", string(code_stdout_response))
-		logger.Debug("\n===== application stderr response start =====\n%s\n===== application stderr response end =====\n", string(code_stderr_response))
+		logger.Debug("\n===== application stdout response start (length = %d bytes)=====\n%s\n===== application stdout response end =====\n",
+			len(code_stdout_response), string(code_stdout_response))
+		logger.Debug("\n===== application stderr response start (length = %d bytes)=====\n%s\n===== application stderr response end =====\n",
+			len(code_stderr_response), string(code_stderr_response))
 
-		//	Prepares the result (combined bytes taken from stdout and stderr of the exited application).
+		//	Prepares the result (combines the bytes taken from stdout and stderr of the exited application).
 		var result []byte = nil
-		result = append(result, code_stdout_response...)
-		result = append(result, '\n', '\n')
-		result = append(result, code_stderr_response...)
+		if len(code_stdout_response) > 0 {
+			result = append(result, code_stdout_response...)
+		}
+		if len(code_stderr_response) > 0 {
+			if len(code_stdout_response) > 0 {
+				result = append(result, '\n', '\n')
+			}
+			result = append(result, code_stderr_response...)
+		}
+		logger.Debug("Build-and-run result length = %d bytes", len(result))
 
-		return ctx, result, nil
+		//	Puts the positions to the given context ('ctx').
+		//	The new context ('new_ctx') is the child of the previous one ('ctx').
+
+		//	We have only application's output, so sets the position
+		//	from which application's output begins to the end of whole message.
+		new_ctx := context.WithValue(ctx, position_compiler_output_key, len(result))
+		//	We have only application's output, so sets the position
+		//	from which application's output begins to 0.
+		new_ctx = context.WithValue(new_ctx, position_program_output_key, 0)
+
+		return new_ctx, result, nil
 
 	//	Compiles the C++ code.
 	case 1:
@@ -406,4 +474,71 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 
 	//	If no processing of original message ('message') has happened, pass it as it is.
 	return ctx, message, nil
+}
+
+func encode_response(ctx context.Context, message []byte) (context.Context, []byte, error) {
+
+	//	If no message (= response to pack) presented or no given context, returns.
+	if message == nil || len(message) == 0 || ctx == nil {
+		location, _ := logger.Get_function_name()
+		return ctx, nil, &logger.ClpError{
+			Code:     1,
+			Msg:      "Code to build or/and context is not presented",
+			Location: location}
+	}
+
+	//	Checks that the context has not been cancelled.
+	select {
+	case <-ctx.Done():
+		return ctx, nil, ctx.Err()
+	default:
+	}
+
+	//	Takes from the given context the positions of builder's and application's outputs.
+
+	position_compiler_output, is_int := ctx.Value(position_compiler_output_key).(int)
+	//	Checks whether it's of proper type or not.
+	if !is_int {
+		location, _ := logger.Get_function_name()
+		return ctx, nil, &logger.ClpError{
+			Code:     2,
+			Msg:      "Can't get the position of compiler's output: the context has wrong data",
+			Location: location}
+	}
+
+	position_application_output, is_int := ctx.Value(position_program_output_key).(int)
+	//	Checks whether it's of proper type or not.
+	if !is_int {
+		location, _ := logger.Get_function_name()
+		return ctx, nil, &logger.ClpError{
+			Code:     3,
+			Msg:      "Can't get the position of application's output: the context has wrong data",
+			Location: location}
+	}
+
+	//	Parses out builder's output and built program's output from the 'message'.
+	//	'message' looks like <bytes_that_represent_compiler_output><bytes_that_represent_application_output> or
+	//	<bytes_that_represent_application_output><bytes_that_represent_compiler_output>
+	var compiler_output []byte = nil
+	var program_output []byte = nil
+	if position_compiler_output < position_application_output {
+		compiler_output = json.RawMessage(message[position_compiler_output:position_application_output])
+		program_output = json.RawMessage(message[position_application_output:])
+	} else {
+		compiler_output = json.RawMessage(message[position_compiler_output:])
+		program_output = json.RawMessage(message[position_application_output:position_compiler_output])
+	}
+
+	response_object := Response{CompilerOutput: string(compiler_output), ProgramOutput: string(program_output)}
+
+	response, err := json.MarshalIndent(&response_object, "", "\t")
+	if err != nil {
+		location, _ := logger.Get_function_name()
+		return ctx, nil, &logger.ClpError{
+			Code:     4,
+			Msg:      "Can't pack a JSON string: " + err.Error(),
+			Location: location}
+	}
+
+	return ctx, response, nil
 }
