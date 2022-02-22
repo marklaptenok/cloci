@@ -163,7 +163,7 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 
 	//	TO-DO: get these parameters from server configuration.
 	dir_for_binaries := ""
-	building_timeout := 250 * time.Millisecond
+	building_timeout := 500 * time.Millisecond
 	running_timeout := 250 * time.Millisecond
 	builder_path := "/usr/local/bin/gcc"
 	builder_options := []string{"-xc", "-O0", "-std=c11", "-Wall", "-Wextra", "-pedantic", "-", "-o"}
@@ -436,7 +436,7 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 			len(code_stderr_response), string(code_stderr_response))
 
 		//	Prepares the result (combines the bytes taken from stdout and stderr of the exited application).
-		var result []byte = nil
+		result := []byte{}
 		if len(code_stdout_response) > 0 {
 			result = append(result, code_stdout_response...)
 		}
@@ -479,7 +479,7 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 func encode_response(ctx context.Context, message []byte) (context.Context, []byte, error) {
 
 	//	If no message (= response to pack) presented or no given context, returns.
-	if message == nil || len(message) == 0 || ctx == nil {
+	if message == nil || ctx == nil {
 		location, _ := logger.Get_function_name()
 		return ctx, nil, &logger.ClpError{
 			Code:     1,
@@ -521,12 +521,18 @@ func encode_response(ctx context.Context, message []byte) (context.Context, []by
 	//	<bytes_that_represent_application_output><bytes_that_represent_compiler_output>
 	var compiler_output []byte = nil
 	var program_output []byte = nil
-	if position_compiler_output < position_application_output {
-		compiler_output = json.RawMessage(message[position_compiler_output:position_application_output])
-		program_output = json.RawMessage(message[position_application_output:])
-	} else {
-		compiler_output = json.RawMessage(message[position_compiler_output:])
-		program_output = json.RawMessage(message[position_application_output:position_compiler_output])
+
+	//	If any of the outputs is not empty, parses out proper JSON fileds from the 'message'.
+	if position_compiler_output != 0 || position_application_output != 0 {
+
+		if position_compiler_output < position_application_output {
+			compiler_output = json.RawMessage(message[position_compiler_output:position_application_output])
+			program_output = json.RawMessage(message[position_application_output:])
+		} else {
+			compiler_output = json.RawMessage(message[position_compiler_output:])
+			program_output = json.RawMessage(message[position_application_output:position_compiler_output])
+		}
+
 	}
 
 	response_object := Response{CompilerOutput: string(compiler_output), ProgramOutput: string(program_output)}
