@@ -52,8 +52,12 @@ func read_from_stream(stream io.ReadCloser, limit int) (response []byte, summary
 
 		//	Reads data from the stream. Checks the state of reading.
 		written_bytes_cnt, err = stream.Read(read_buffer)
+
+		//	Removes unnecessary zero at the end of read data.
+		read_buffer = bytes.Trim(read_buffer, "\x00")
+
 		if err != nil && err != io.EOF {
-			logger.Warning("Response has not been read from the stream: %s", err.Error())
+			logger.Warning("Data have not been read from the stream: %s", err.Error())
 			break
 		}
 
@@ -79,11 +83,10 @@ func read_from_stream(stream io.ReadCloser, limit int) (response []byte, summary
 	} //	--- end of for ---
 
 	//	Cuts unnecessary bytes at the end.
-	if summary_written_bytes_cnt < limit {
-		response = response[:summary_written_bytes_cnt]
-	} else {
-		response = response[:limit]
+	if summary_written_bytes_cnt > limit {
+		summary_written_bytes_cnt = limit
 	}
+	response = response[:summary_written_bytes_cnt]
 
 	return
 }
@@ -92,7 +95,7 @@ func read_from_stream(stream io.ReadCloser, limit int) (response []byte, summary
 
 func parse_request(ctx context.Context, message []byte) (context.Context, []byte, error) {
 
-	//	If no no given context, returns.
+	//	If there is no given context, returns.
 	if ctx == nil {
 		location, _ := logger.Get_function_name()
 		return ctx, nil, &logger.ClpError{
@@ -166,7 +169,7 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 	building_timeout := 500 * time.Millisecond
 	running_timeout := 250 * time.Millisecond
 	builder_path := "/usr/local/bin/gcc"
-	builder_options := []string{"-xc", "-O0", "-std=c11", "-Wall", "-Wextra", "-pedantic", "-", "-o"}
+	builder_options := []string{"-xc", "-O0", "-std=c11", "-Wall", "-Wextra", "-pedantic", "-lm", "-"}
 	stderr_buffer_size := (1 << 11) //	2Kb
 	stdout_buffer_size := (1 << 11) //	2Kb
 
@@ -211,7 +214,7 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 	}
 
 	// Adds filename for the output binary to the builder options.
-	builder_options = append(builder_options, output_file.Name())
+	builder_options = append(builder_options, "-o", output_file.Name())
 
 	//	Takes from the given context the language in which the code is written.
 	language, is_uint8 := ctx.Value(code_language_key).(uint8)
@@ -276,15 +279,20 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 			if err != nil || written_bytes_cnt != len(message) {
 				logger.Warning("Code of length = %d bytes (sent = %d bytes) was not sent to the builder: %v", len(message), written_bytes_cnt, err)
 			} else {
-				logger.Debug("Building in progress. %d bytes passed to it", written_bytes_cnt)
+				logger.Debug("Builder is working. %d bytes passed to it", written_bytes_cnt)
 			}
 
 		}()
 
-		//	Reads from stderr the certain amount of bytes. Wanring! It's not accurate.
+		//	Reads from stderr the certain amount of bytes. Warning! It's not accurate.
 		//	If any error happens during building, the builder writes here.
 		builder_stderr_response, summary_written_bytes_cnt, stderr_reader_err := read_from_stream(stderr, stderr_buffer_size)
-		logger.Debug("Building has completed. %d bytes read from stderr", summary_written_bytes_cnt)
+		logger.Debug("Building has completed. %d bytes read from stderr", len(builder_stderr_response))
+		if summary_written_bytes_cnt != len(builder_stderr_response) {
+			logger.Warning("Reading from builder's stderr has been completed with error")
+		}
+
+		logger.Debug("\n===== (Raw output) builder stderr response start =====\n%v\n===== builder stderr response end =====\n", builder_stderr_response)
 
 		//	Waits until the builder stopped and all data will be read from stderr.
 		//	Closes the stderr pipe and deallocates resources for 'cmd_building'.
@@ -331,8 +339,10 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 				Location: location}
 		}
 
-		//	Removes unnecessary symbols from the builder's output.
+		//	Removes unnecessary symbols and phrases from the builder's output.
 		builder_stderr_response = bytes.Trim(bytes.ReplaceAll(builder_stderr_response, []byte("<stdin>:"), []byte("")), "\n\x00 ")
+		//builder_stderr_response = bytes.ReplaceAll(builder_stderr_response, []byte("/usr/local/bin/ld"), []byte("ld (linker)"))
+		//builder_stderr_response = bytes.ReplaceAll(builder_stderr_response, []byte("/tmp/"), []byte(""))
 
 		//	Checks whether the builder reports any error/warning.
 		//	If so returns its output only without execution of the built code.
@@ -535,8 +545,12 @@ func encode_response(ctx context.Context, message []byte) (context.Context, []by
 
 	}
 
+	//	Creates a JSON formatted object for further marshaling.
 	response_object := Response{CompilerOutput: string(compiler_output), ProgramOutput: string(program_output)}
 
+	//TO-DO: write a function to mask special characters including '"', '\n', '\t' and replace marshaliser
+
+	//	Creates a set of byte that represents a JSON formatted string.
 	response, err := json.MarshalIndent(&response_object, "", "\t")
 	if err != nil {
 		location, _ := logger.Get_function_name()
@@ -545,6 +559,12 @@ func encode_response(ctx context.Context, message []byte) (context.Context, []by
 			Msg:      "Can't pack a JSON string: " + err.Error(),
 			Location: location}
 	}
+
+	//	Masks special characters ('\n', '\t', '"').
+	response = bytes.ReplaceAll(response, []byte("\\n"), []byte("\\\\n"))
+	response = bytes.ReplaceAll(response, []byte("\\t"), []byte("\\\\t"))
+	//TO-DO: write a function to mask special characters including '"', '\n', '\t' and replace marshaliser
+	//response = bytes.ReplaceAll(response, []byte("\""), []byte("\\\""))
 
 	return ctx, response, nil
 }
