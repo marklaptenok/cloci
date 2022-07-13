@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"time"
 
 	"codelearning.online/logger"
@@ -165,11 +166,22 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 	//logger.Debug("%v\n Length: %d", message, len(message))
 
 	//	TO-DO: get these parameters from server configuration.
-	dir_for_binaries := ""
+	child_jail_number := "3" //	TO-DO: take number of executable jail from the channel.
+	dir_for_binaries := "/child_jail_" + child_jail_number
+	user_binary_corename := "test"
+	command_to_run := "/cloci_microservices/user_binary_runner"
+	command_to_run_options := []string{child_jail_number}
 	building_timeout := 500 * time.Millisecond
 	running_timeout := 250 * time.Millisecond
-	builder_path := "/usr/local/bin/gcc"
-	builder_options := []string{"-xc", "-O0", "-std=c11", "-Wall", "-Wextra", "-pedantic", "-lm", "-"}
+
+	//	Using GCC compiler
+	//	builder_path := "/usr/local/bin/gcc"
+	//	builder_options := []string{"-xc", "-O0", "-std=c11", "-Wall", "-Wextra", "-pedantic", "-lm", "-"}
+
+	//	Using clang compiler
+	builder_path := "/usr/bin/clang"
+	builder_options := []string{"-xc", "-O0", "-std=c11", "-Wall", "-Wextra", "-pedantic", "-"}
+
 	stderr_buffer_size := (1 << 11) //	2Kb
 	stdout_buffer_size := (1 << 11) //	2Kb
 
@@ -192,8 +204,8 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 	}
 
 	//	Creates a temporary file in /tmp to write builder's output if building will be successful.
-	//	TO-DO: specify a directory which is alloacted on a tmpfs
-	output_file, err := os.CreateTemp(dir_for_binaries, "cloci")
+	//	TO-DO: dir_for_binaries has to be specified dynamically, depending on currently free runtime jail.
+	output_file, err := os.CreateTemp(dir_for_binaries, user_binary_corename)
 	if err != nil {
 		location, _ := logger.Get_function_name()
 		return ctx, nil, &logger.ClpError{
@@ -212,6 +224,8 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 			Msg:      "Can't prepare a temporary file to write builder's output: " + err.Error(),
 			Location: location}
 	}
+
+	logger.Debug("The output file %s for the binary is ready.", output_file.Name())
 
 	// Adds filename for the output binary to the builder options.
 	builder_options = append(builder_options, "-o", output_file.Name())
@@ -277,9 +291,9 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 
 			written_bytes_cnt, err := stdin.Write(message)
 			if err != nil || written_bytes_cnt != len(message) {
-				logger.Warning("Code of length = %d bytes (sent = %d bytes) was not sent to the builder: %v", len(message), written_bytes_cnt, err)
+				logger.Warning("Code of length = %d bytes (sent = %d bytes) were not sent to the builder: %v", len(message), written_bytes_cnt, err)
 			} else {
-				logger.Debug("Builder is working. %d bytes passed to it", written_bytes_cnt)
+				logger.Debug("Builder is working. %d bytes were passed to it", written_bytes_cnt)
 			}
 
 		}()
@@ -287,7 +301,7 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 		//	Reads from stderr the certain amount of bytes. Warning! It's not accurate.
 		//	If any error happens during building, the builder writes here.
 		builder_stderr_response, summary_written_bytes_cnt, stderr_reader_err := read_from_stream(stderr, stderr_buffer_size)
-		logger.Debug("Building has completed. %d bytes read from stderr", len(builder_stderr_response))
+		logger.Debug("Building has completed. %d bytes were read from stderr", len(builder_stderr_response))
 		if summary_written_bytes_cnt != len(builder_stderr_response) {
 			logger.Warning("Reading from builder's stderr has been completed with error")
 		}
@@ -361,16 +375,18 @@ func build_and_run_code(ctx context.Context, message []byte) (context.Context, [
 
 		//	If the builder reports no error, we will execute the built application.
 
-		logger.Info("Builder successfully finished")
+		logger.Info("Builder successfully finished. Binary: %s", output_file.Name())
 
 		//	Prepares a context with the timeout for running the built application.
 		ctx_run_output, cancel_run_output := context.WithTimeout(ctx, running_timeout)
 		defer cancel_run_output()
 
+		//	We know by now the name of the temporary binary, so we are preparing its launch
+		command_to_run_options = append(command_to_run_options, "/"+filepath.Base(output_file.Name()))
+
 		//	Prepares an object to run the application.
-		//	TO-DO: this has to be run in a jail
 		//	TO-DO: make it possible the built application to receive CLI arguments.
-		cmd_run_output := exec.CommandContext(ctx_run_output, output_file.Name())
+		cmd_run_output := exec.CommandContext(ctx_run_output, command_to_run, command_to_run_options...)
 
 		//	Prepares stdout to read output from running application.
 		stdout, err := cmd_run_output.StdoutPipe()
