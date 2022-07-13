@@ -1,0 +1,4 @@
+{
+	"language": 0,
+	"code_to_process":"#include <math.h>\n#include <stdio.h>\n\nint main()\n{\n\tdouble a = 0.45, b = 34.0, c = -456.78, discriminant, root1, root2, realPart, imagPart;\n\tdiscriminant = b * b - 4 * a * c;\n\t// condition for real and different roots\n\tif (discriminant > 0) {\n\t\troot1 = (-b + sqrt(discriminant)) / (2 * a);\n\t\troot2 = (-b - sqrt(discriminant)) / (2 * a);\n\t\tprintf(\"root1 = %.2lf and root2 = %.2lf\", root1, root2);\n\t}\n\t\t// condition for real and equal roots\n\t\telse if (discriminant == 0) {\n\t\t\troot1 = root2 = -b / (2 * a);\n\t\t\tprintf(\"root1 = root2 = %.2lf;\", root1);\n\t\t}\n\t// if roots are not real\n\telse {\n\t\trealPart = -b / (2 * a);\n\t\timagPart = sqrt(-discriminant) / (2 * a);\n\t\tprintf(\"root1 = %.2lf+%.2lfi and root2 = %.2f-%.2fi\", realPart, imagPart, realPart, imagPart);\n\t}\n\n\treturn 0;\n}"
+}

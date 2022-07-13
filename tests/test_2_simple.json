@@ -1,0 +1,4 @@
+{
+	"language": 0,
+	"code_to_process":"#include <stdio.h>\n\n\tint main()\n{\n\tint a = 5;\n\tint* ptr = &a;\n\nreturn 0;\n}"
+}

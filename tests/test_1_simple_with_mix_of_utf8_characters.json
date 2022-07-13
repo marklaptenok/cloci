@@ -1,0 +1,4 @@
+{
+	"language" : 0,
+	"code_to_process" : "#include <stdio.h>\n\n//\tЭто главная функция\nint main()\n{\n\tdouble number_variable = 2345.678;\n\n\tprintf(\"Some long phrase that contains a lot of words не только на английском, но и на русском + some number = %lf\\n\", number_variable);\n\n\treturn 0;\n}\n"
+}

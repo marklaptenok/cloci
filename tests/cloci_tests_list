@@ -1,0 +1,59 @@
+int main()
+{
+	//printf("Hello\n");
+	return 0;
+}
+
+
+int main()
+{
+	return 0;
+}
+
+
+void main()
+{
+	return 0;
+}
+
+
+#include <stdio.h>
+
+int main()
+{
+	printf("Hello\n");
+	return 0;
+}
+
+
+#include <stdio.h>
+
+int main()
+{
+	printf("Привет, hello\n");
+	return 0;
+}
+
+
+#include <stdio.h>
+
+int main()
+{
+	int a = 5;
+	int* ptr = &a;
+
+	return 0;
+}
+
+
+#include <stdio.h>
+
+int main()
+{
+	int a = 5;
+	int* ptr = &a;
+
+	printf("Число: %i\n", *ptr);
+
+	return 0;
+}

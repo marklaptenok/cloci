@@ -1,0 +1,4 @@
+{
+	"language": 0,
+	"code_to_process":"#include <stdio.h>\n\nint main() {\n\tint n = 7, i, flag = 0;\n\n\t// 0 and 1 are not prime numbers\n\t// change flag to 1 for non-prime number\n\tif (n == 0 || n == 1)\n\t\tflag = 1;\n\n\t\tfor (i = 2; i <= n / 2; ++i) {\n\t\t// if n is divisible by i, then n is not prime\n\t\t// change flag to 1 for non-prime number\n\n\t\tif (n % i == 0) {\n\t\t\tflag = 1;\n\t\t\tbreak;\n\t\t}\n\t}\n\n\t// flag is 0 for prime numbers\n\tif (flag == 0)\n\t\tprintf(\"%d is a prime number.\", n);\n\telse\n\t\tprintf(\"%d is not a prime number.\", n);\n\n\treturn 0;\n}"
+}
