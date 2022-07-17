@@ -14,6 +14,8 @@ import (
 var (
 	service_waiter_channel chan bool
 	https_server_handle    *https_server.Handle
+
+	version string
 )
 
 //	Signal handlers
@@ -85,6 +87,11 @@ func init() {
 	if err := logger.Check(); err != nil {
 		os.Exit(int(err.(*logger.ClpError).Code))
 	}
+
+	//	Show current version of the service.
+	//	To change it, compile with
+	//	go build -ldflags "-X main.version=<major.minor.patch>"
+	logger.Info("\nCodeLearning Online Compiler-Interpreter v.%s\nCopyright Mark Laptenok, 2021-2022", version)
 
 	//	Sets handlers for SIGINT, SIGTERM, and SIGKILL signals.
 	//	Note: SIGKILL is not processed on FreeBSD.
